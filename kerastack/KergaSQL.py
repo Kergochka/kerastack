@@ -1,27 +1,31 @@
-import sqlite3
 import re
-from kerastack.decorators import decorator
-from typing import Any, Iterable, Literal, Optional, Self, Type, TypeVar, Union, cast
+import sqlite3
 from abc import abstractmethod
+from typing import Any, Iterable, Literal, Optional, Self, Type, TypeVar, Union, cast
+
+from kerastack.decorators import decorator
+
 T = TypeVar("T", bound="KCoreORM")
 
 
 class UserPermissionError(Exception):
-    """Raised when a user-mode instance attempts a forbidden action"""
-    __slots__ = ()
+    """Выбрасывается, когда экземпляр в USER-режиме пытается выполнить запрещенное действие."""
 
+    __slots__ = ()
 
 
 class ConnPermissionError(Exception):
-    """Raised when an operation is not permitted for the current connection mode"""
+    """Выбрасывается, когда операция не разрешена для текущего режима соединения."""
+
     __slots__ = ()
+
 
 class __kLogicNode:
     """
-    Base for singleton logical marker instances (used as ORM/query logic tokens).
+    Базовый класс для синглтонов логических маркеров (используются как токены логики ORM/запросов).
 
-    Each concrete subclass exposes at most one instance via ``__new__`` (singleton).
-    Subclasses must define ``_instance = None`` on the class.
+    Каждый конкретный подкласс предоставляет не более одного экземпляра через ``__new__`` (singleton).
+    Подклассы должны определить ``_instance = None`` на уровне класса.
     """
 
     __slots__ = ()
@@ -32,30 +36,31 @@ class __kLogicNode:
             cls._instance = super().__new__(cls)
         return cls._instance
 
+
 class __kANDcls(__kLogicNode):
-    """Singleton instance representing logical AND (conjunction) in query/flag composition."""
+    """Синглтон, представляющий логический AND (конъюнкцию) в композиции запросов/флагов."""
 
     __slots__ = ()
     _instance = None
 
 
 class __kORcls(__kLogicNode):
-    """Singleton instance representing logical OR (disjunction) in query/flag composition."""
+    """Синглтон, представляющий логический OR (дизъюнкцию) в композиции запросов/флагов."""
 
     __slots__ = ()
     _instance = None
 
 
-# Module-level singletons: use these as logical values (not per-call constructors).
+# Синглтоны уровня модуля: используйте их как логические значения (а не как конструкторы на каждый вызов).
 KAND = __kANDcls()
 KOR = __kORcls()
 
 
 class KColumn:
     """
-    KColumn instances act as descriptors for table columns.
-    They are intended to be accessed primarily in the "user" context.
-    allowing interaction with data associated with a specific user or record.
+    Экземпляры KColumn работают как дескрипторы колонок таблицы.
+    Предполагается, что доступ к ним в основном идет в "пользовательском" контексте,
+    что позволяет работать с данными конкретного пользователя или записи.
     """
 
     __slots__ = ("sql_types", "_name")
@@ -74,6 +79,7 @@ class KColumn:
         "DATE",
         "DATETIME",
     )
+
     def __init__(self, sql_command: str) -> None:
         if not isinstance(sql_command, str):
             raise KCoreORM.get_error(TypeError, id=11)
@@ -146,10 +152,10 @@ class __KSql3Execution:
 
     def execute(self, sql3_data: str | list[str]) -> None:
         """
-        Execute one SQL statement or a list of statements with the current cursor.
+        Выполнить один SQL-запрос или список SQL-запросов текущим курсором.
 
-        Args:
-            sql3_data: Single SQL string or list of SQL strings.
+        Параметры:
+            sql3_data: Одна SQL-строка или список SQL-строк.
         """
         if isinstance(sql3_data, list):
             for i in sql3_data:
@@ -159,7 +165,7 @@ class __KSql3Execution:
 
     def fetchall(self, sql3_select: str) -> list[tuple[Any, ...]]:
         """
-        Fetch all rows from the database.
+        Получить все строки из базы данных.
         """
         self.cur.execute(sql3_select)
         return self.cur.fetchall()
@@ -168,20 +174,20 @@ class __KSql3Execution:
         self, immediate: None | Any, sql3_select: str = ""
     ) -> Optional[tuple[Any, ...]] | Literal["SELECTED"]:
         """
-        Fetch one row or stage a SELECT query for the next fetch.
+        Получить одну строку или подготовить SELECT для следующего чтения.
 
-        Behavior:
-        - If `immediate` is not None, returns `cursor.fetchone()` directly.
-        - Else if `sql3_select` is empty, returns `cursor.fetchone()` directly.
-        - Else executes `sql3_select` and returns the sentinel `"SELECTED"`.
+        Поведение:
+        - Если `immediate` не None, сразу возвращает `cursor.fetchone()`.
+        - Иначе, если `sql3_select` пуст, также сразу возвращает `cursor.fetchone()`.
+        - Иначе выполняет `sql3_select` и возвращает маркер `"SELECTED"`.
 
-        This allows two modes:
-        1) two-step mode: call with SQL, then call again without SQL;
-        2) immediate mode: pass `immediate` to force direct fetch.
+        Это позволяет два режима:
+        1) двухшаговый режим: сначала вызвать с SQL, затем повторно без SQL;
+        2) немедленный режим: передать `immediate`, чтобы принудительно сделать прямой fetch.
         """
         if not sql3_select or immediate is not None:
             return self.cur.fetchone()
-        
+
         self.cur.execute(sql3_select)
         return "SELECTED"
 
@@ -347,66 +353,105 @@ class KCoreORM(__KSql3Execution):
     )
     _table_name = "Default_name"
 
-    # Class-level flags stored in `_flag_of_cls` (bytearray):
-    # - bit 0: class is registered
-    # - bit 1: global write/command lock (execute, save, delete, delete_ranges, drop, drop_columns)
-    # - bit 2: global read/write/command lock
-    # - bit 3: always synchronize table schema from current KColumn sql_types
-    _flag_of_cls = bytearray(4)
-    # Instance-level flags stored in `_flag_of_instance` (bytearray):
-    # - bit 0: user mode
-    # - bit 1: base initializer marker (super().__init__ called)
-    # Cache ORM metadata per concrete subclass:
-    # - column mapping attr_name -> db column index (cid)
-    # - column SQL fragments for CREATE TABLE
-    # This avoids re-running PRAGMA/mapping work on every instance.
-    _orm_meta_cache: dict[type["KCoreORM"], dict[str, Any]] = {}
+    # Флаги уровня класса хранятся в `_flag_of_cls` (bytearray):
+    # - бит 0: класс зарегистрирован
+    # - бит 1: глобальная блокировка записи/команд (execute, save, delete, delete_ranges, drop, drop_columns)
+    # - бит 2: глобальная блокировка чтения/записи/команд
+    # - бит 3: всегда синхронизировать схему таблицы по текущим KColumn sql_types
+    _flag_of_cls = bytearray(1)
+    # Флаги уровня экземпляра хранятся в `_flag_of_instance` (bytearray):
+    # - бит 0: пользовательский режим
+    # - бит 1: маркер вызова базового инициализатора (super().__init__ вызван)
+
+    _orm_meta_cache: dict[tuple[type["KCoreORM"], str], dict[str, Any]] = {}
+
+    @staticmethod
+    def _get_db_key(db: sqlite3.Connection) -> str:
+        """
+        Получить ключ текущей main-базы для кеша метаданных ORM.
+
+        Формат ключа:
+        - file:<абсолютный_путь> для файловой БД;
+        - memory:<id(connection)> для in-memory/временной БД.
+        """
+        cur = db.cursor()
+        cur.execute("PRAGMA database_list")
+        for _, db_name, file_path in cur.fetchall():
+            if db_name == "main":
+                return f"file:{file_path}" if file_path else f"memory:{id(db)}"
+        return f"unknown:{id(db)}"
 
     def __init__(self, db: sqlite3.Connection, cursor: sqlite3.Cursor) -> None:
         self.db = db
         self.cur = cursor
         self._list_requests: list[str] = []
 
+        # При нескольких соединениях к одному файлу DDL (DROP/ALTER) может ждать блокировку —
+        # busy_timeout заставляет SQLite подождать миллисекунды вместо мгновенного OperationalError.
+        self.db.execute("PRAGMA busy_timeout = 3000")
+
         if not hasattr(self, "_flag_of_instance"):
             self._flag_of_instance = bytearray(1)
-        # Mark that the base ORM initializer ran.
+
+        # Чекер __init__
         self._flag_of_instance[0] |= 1 << 1
 
         cls = type(self)
+        # db_key — айди файла БД или id(self.db) для in-memory.
+        db_key = self._get_db_key(self.db)
+        # cache_key — пара (класс модели, ключ БД): отдельный кеш метаданных на каждую БД.
+        cache_key = (cls, db_key)
+
+        # Проверка, что класс зарегистрирован
         if not (cls._flag_of_cls[0] & (1 << 0)):
             raise self.get_error(RuntimeError, id=7)
-        force_schema_refresh = bool(cls._flag_of_cls[0] & (1 << 3))
-        meta = None if force_schema_refresh else self._orm_meta_cache.get(cls)
 
-        # Global read-lock mode: do not expose row-mapping buffers.
+        # Флаг @check_columns_for_update: синхронизировать схему с KColumn при расхождении
+        force_schema_refresh = bool(cls._flag_of_cls[0] & (1 << 3))
+
+        # Берём кеш по (cls, db_key)
+        meta: dict[str, Any] | None = self._orm_meta_cache.get(cache_key)
+
+        # Режим глобальной блокировки чтения: не раскрываем буферы маппинга строки.
         if cls._flag_of_cls[0] & (1 << 2):
             self._col_to_idx = {}
             self._data = []
             return
 
+        # columns_in_class — все KColumn из иерархии класса; cols_sql — фрагменты для CREATE TABLE.
+        columns_in_class: dict[str, KColumn] = {}
+        for base in cls.__mro__:
+            for name, obj in base.__dict__.items():
+                if isinstance(obj, KColumn) and name not in columns_in_class:
+                    columns_in_class[name] = obj
 
+        cols_sql = [f"{obj._name} {obj.sql_types}" for obj in columns_in_class.values()]
+
+        # Если включена авто-синхронизация и в классе изменились колонки — кеш недействителен.
+        if (
+            force_schema_refresh
+            and meta is not None
+            and meta.get("cols_sql") != cols_sql
+        ):
+            self._orm_meta_cache.pop(cache_key, None)
+            meta = None
 
         if meta is None:
-            # Collect all KColumn instances from the class and its base classes.
-            columns_in_class: dict[str, KColumn] = {}
-            for base in cls.__mro__:
-                for name, obj in base.__dict__.items():
-                    if isinstance(obj, KColumn) and name not in columns_in_class:
-                        columns_in_class[name] = obj
-
-            cols_sql = [f"{obj._name} {obj.sql_types}" for obj in columns_in_class.values()]
             safe_table = self._quote_identifier(self._table_name)
+            # force_schema_refresh: перестраиваем таблицу под актуальный список колонок при необходимости.
             if force_schema_refresh:
                 self._sync_table_schema_for_update(columns_in_class, cols_sql)
             else:
-                self.cur.execute(f"CREATE TABLE IF NOT EXISTS {safe_table} ({', '.join(cols_sql)})")
+                self.cur.execute(
+                    f"CREATE TABLE IF NOT EXISTS {safe_table} ({', '.join(cols_sql)})"
+                )
 
             self.cur.execute(f"PRAGMA table_info({safe_table})")
             rows = self.cur.fetchall()
-            # db_map: column name -> index in db (cid)
+            # db_map: имя колонки -> индекс в БД (cid)
             db_map = {row[1]: row[0] for row in rows}
-            # Map descriptor attribute names -> SQLite column indexes (cid)
-    
+            # Маппинг имён атрибутов дескрипторов -> индексы колонок SQLite (cid)
+
             col_to_idx: dict[str, int] = {}
             for attr_name, obj in columns_in_class.items():
                 idx = db_map.get(obj._name)
@@ -421,12 +466,15 @@ class KCoreORM(__KSql3Execution):
                 "col_to_idx": col_to_idx,
                 "data_size": data_size,
             }
-            self._orm_meta_cache[cls] = meta
+            self._orm_meta_cache[cache_key] = meta
+
         else:
-            # Ensure the table exists in the current connection.
+            # Убеждаемся, что таблица существует в текущем соединении.
             cols_sql = meta["cols_sql"]
             safe_table = self._quote_identifier(self._table_name)
-            self.cur.execute(f"CREATE TABLE IF NOT EXISTS {safe_table} ({', '.join(cols_sql)})")
+            self.cur.execute(
+                f"CREATE TABLE IF NOT EXISTS {safe_table} ({', '.join(cols_sql)})"
+            )
 
         self._col_to_idx = meta["col_to_idx"]
         self._data = [None] * meta["data_size"]
@@ -435,23 +483,22 @@ class KCoreORM(__KSql3Execution):
         self, sql_query: str, *, allowed_commands: Optional[set[str]] = None
     ) -> tuple[bool, str]:
         """
-        Checks if a SQL request is valid and returns a tuple containing a boolean indicating validity and a string with the reason for the validity.
-        Args:
-            sql_query: The SQL request to check.
-            allowed_commands: A set of commands that are allowed in this context.
-        Returns:
-            A tuple containing a boolean indicating validity and a string with the reason for the validity.
+        Проверяет валидность SQL-запроса и возвращает кортеж:
+        булево значение валидности и строку с причиной.
+        Параметры:
+            sql_query: SQL-запрос для проверки.
+            allowed_commands: Набор команд, разрешенных в данном контексте.
+        Возвращает:
+            Кортеж из булева признака валидности и строки с причиной.
         """
 
         if not isinstance(sql_query, str):
             return False, "SQL request must be a string."
 
         q = sql_query.strip().rstrip(";")
+
         if not q:
             return False, "SQL request cannot be empty."
-
-        if ";" in q:
-            return False, "Multiple SQL statements are not allowed."
 
         if q.count("(") != q.count(")"):
             return False, "Unbalanced parentheses in SQL request."
@@ -471,8 +518,8 @@ class KCoreORM(__KSql3Execution):
                 "unrecognized token",
                 "near ",
             )
-            # Syntax-level problems are invalid requests.
-            # Semantic/runtime errors (e.g. no such table) are still valid SQL.
+            # Проблемы уровня синтаксиса — это невалидные запросы.
+            # Семантические/выполняемые ошибки (например, no such table) все еще означают валидный SQL.
             if any(signature in msg for signature in syntax_signatures):
                 return False, str(e)
             return True, ""
@@ -480,9 +527,9 @@ class KCoreORM(__KSql3Execution):
             return False, str(e)
 
     @classmethod
-    def _quote_identifier(cls, name: str) -> str:
+    def _quote_identifier(cls: type, name: str) -> str:
         """
-        Validate and quote SQLite identifiers (table/column names).
+        Проверить и экранировать идентификаторы SQLite (имена таблиц/колонок).
         """
         if not isinstance(name, str) or not cls.IDENTIFIER_RE.fullmatch(name):
             raise cls.get_error(ValueError, id=22, add=str(name))
@@ -492,7 +539,7 @@ class KCoreORM(__KSql3Execution):
         self, columns_in_class: dict[str, KColumn], cols_sql: list[str]
     ) -> None:
         """
-        Rebuild table schema from current KColumn definitions and preserve common data.
+        Пересобрать схему таблицы по текущим определениям KColumn и сохранить общие данные.
         """
         safe_table = self._quote_identifier(self._table_name)
 
@@ -503,7 +550,9 @@ class KCoreORM(__KSql3Execution):
         exists = self.cur.fetchone() is not None
 
         if not exists:
-            self.cur.execute(f"CREATE TABLE IF NOT EXISTS {safe_table} ({', '.join(cols_sql)})")
+            self.cur.execute(
+                f"CREATE TABLE IF NOT EXISTS {safe_table} ({', '.join(cols_sql)})"
+            )
             return
 
         tmp_name = f"__tmp_sync_{self._table_name}"
@@ -533,26 +582,28 @@ class KCoreORM(__KSql3Execution):
 
     def execute(self, sql3_data: Union[str, list[str]] = "") -> None:
         """
-        Validate and execute one SQL request or a queued batch.
+        Валидировать и выполнить один SQL-запрос или отложенный батч.
 
-        The method enforces permission flags, validates each SQL statement,
-        normalizes delimiters, then executes the final queue.
+        Метод проверяет флаги доступа, валидирует каждый SQL-запрос,
+        нормализует разделители, затем выполняет итоговую очередь.
         """
-        # Access locks:
-        # - operation requires a connection instance (not USER mode)
-        # - class write/read locks also block execute
+        # Блокировки доступа:
+        # - операция требует экземпляр соединения (не USER-режим)
+        # - классовые блокировки записи/чтения также блокируют execute
         if self._flag_of_instance[0] & (1 << 0):
             raise self.get_error(PermissionError, id=0)
-        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (1 << 2):
+        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (
+            1 << 2
+        ):
             raise self.get_error(PermissionError, id=1)
 
-        # Normalize input to a list of candidate queries.
+        # Нормализуем вход в список кандидатных запросов.
         if isinstance(sql3_data, str):
             raw_queries = [sql3_data] if sql3_data.strip() else []
         else:
             raw_queries = sql3_data
 
-        # Validate and normalize each query.
+        # Валидируем и нормализуем каждый запрос.
         clean_current = []
         for q in raw_queries:
             if not isinstance(q, str):
@@ -566,11 +617,13 @@ class KCoreORM(__KSql3Execution):
             ok, reason = self.check_sql3_request(query)
             if not ok:
                 details = f"{q} | {reason}" if reason else q
-                raise self.get_error(sqlite3.OperationalError, id=20, add=details) from None
+                raise self.get_error(
+                    sqlite3.OperationalError, id=20, add=details
+                ) from None
 
             clean_current.append(query)
 
-        # Merge deferred requests and execute as one atomic batch.
+        # Объединяем отложенные запросы и выполняем как один атомарный батч.
         final_queue = self._list_requests + clean_current
         if not final_queue:
             return
@@ -581,30 +634,33 @@ class KCoreORM(__KSql3Execution):
             self.cur.execute(f"SAVEPOINT {savepoint}")
             super().execute(final_queue)
             self.cur.execute(f"RELEASE SAVEPOINT {savepoint}")
-            # Clear deferred queue only after successful execution.
+            # Очищаем очередь отложенных запросов только после успешного выполнения.
             self._list_requests.clear()
         except Exception as e:
             try:
                 self.cur.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
                 self.cur.execute(f"RELEASE SAVEPOINT {savepoint}")
             except Exception:
-                # Fallback to connection-wide rollback if savepoint handling failed.
+                # Резервный путь: откат всего соединения, если работа с savepoint не удалась.
                 self.db.rollback()
-            # Restore deferred queue; direct one-shot input is intentionally not queued.
+            # Восстанавливаем отложенную очередь; одноразовый прямой ввод специально не ставится в очередь.
             self._list_requests = queued_before
             raise self.get_error(type(e), message=str(e)) from e
 
-
-    def add_requests(self, reqs: str | list[str] | Iterable[str] | tuple[str, ...] | set[str]) -> None:
+    def add_requests(
+        self, reqs: str | list[str] | Iterable[str] | tuple[str, ...] | set[str]
+    ) -> None:
         """
-        Add one or more SQL requests to the deferred queue (connection-only).
+        Добавить один или несколько SQL-запросов в отложенную очередь (только для connection-режима).
 
-        Args:
-            reqs: Single SQL string or list of SQL strings.
+        Параметры:
+            reqs: Одна SQL-строка или список SQL-строк.
         """
         if self._flag_of_instance[0] & (1 << 0):
             raise self.get_error(PermissionError, id=0)
-        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (1 << 2):
+        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (
+            1 << 2
+        ):
             raise self.get_error(PermissionError, id=1)
 
         if isinstance(reqs, str):
@@ -626,13 +682,13 @@ class KCoreORM(__KSql3Execution):
 
     def get_requests(self) -> list[str]:
         """
-        Get the list of requests that are queued for execution.
+        Получить список запросов, поставленных в очередь на выполнение.
         """
         return self._list_requests
 
     def fetchall(self, sql3_select: str) -> list[tuple[Any, ...]]:
         """
-        Fetch all rows from the database.
+        Получить все строки из базы данных.
         """
 
         if self._flag_of_instance[0] & (1 << 0):
@@ -646,7 +702,6 @@ class KCoreORM(__KSql3Execution):
 
         sql3_select = sql3_select.strip().rstrip(";") + ";"
 
-
         if not sql3_select.upper().startswith("SELECT"):
             raise self.get_error(TypeError, id=15)
 
@@ -656,12 +711,12 @@ class KCoreORM(__KSql3Execution):
         self, sql3_select: str = "", immediate: None | Any = None
     ) -> Optional[tuple[Any, ...]] | Literal["SELECTED"]:
         """
-        Fetch one row with ORM permission/type checks.
+        Получить одну строку с проверками прав доступа/типов ORM.
 
-        Behavior mirrors base `fetchone`:
-        - `immediate is not None` -> return `cursor.fetchone()` directly;
-        - empty `sql3_select` -> return `cursor.fetchone()` directly;
-        - non-empty `sql3_select` -> execute query and return `"SELECTED"`.
+        Поведение повторяет базовый `fetchone`:
+        - `immediate is not None` -> сразу вернуть `cursor.fetchone()`;
+        - пустой `sql3_select` -> сразу вернуть `cursor.fetchone()`;
+        - непустой `sql3_select` -> выполнить запрос и вернуть `"SELECTED"`.
         """
 
         if self._flag_of_instance[0] & (1 << 0):
@@ -682,48 +737,47 @@ class KCoreORM(__KSql3Execution):
 
     def delete_ranges(
         self,
-        **ranges: tuple[Any, Any]
-        | tuple[tuple[Any, Any], Any]
-        | tuple[Any, Any, Any],
+        **ranges: tuple[Any, Any] | tuple[tuple[Any, Any], Any] | tuple[Any, Any, Any],
     ) -> str:
         """
-        Delete rows where each specified column value is within a given range.
+        Удалить строки, где значение каждой указанной колонки попадает в заданный диапазон.
 
-        Each keyword argument supports one of these forms:
+        Каждый именованный аргумент поддерживает один из форматов:
             column_name=exact_value
             column_name=(exact_value,)
             column_name=(start_value, end_value)
             column_name=((start_value, end_value), KOR|KAND|None)
             column_name=(start_value, end_value, KOR|KAND|None)
 
-        Example:
+        Пример:
             delete_ranges(id=(1, 100), price=(10, 50))
 
-        Notes:
-        - Column names are validated against known ORM columns.
-        - Identifiers are SQL-quoted to prevent identifier injection.
-        - If logic marker is omitted, AND is used.
-        - Exact-value shorthand is translated into `column = ?`.
-        - `KOR` joins current condition with the next one using OR.
-        - `KAND` joins current condition with the next one using AND.
+        Примечания:
+        - Имена колонок валидируются по известным колонкам ORM.
+        - Идентификаторы экранируются для защиты от подстановки в имена колонок/таблиц.
+        - Если логический маркер не указан, используется AND.
+        - Сокращенная форма точного значения преобразуется в `column = ?`.
+        - `KOR` объединяет текущее условие со следующим через OR.
+        - `KAND` объединяет текущее условие со следующим через AND.
 
-        Returns:
-            Human-readable message with deleted row count.
+        Возвращает:
+            Человекочитаемое сообщение с количеством удаленных строк.
 
-        Raises:
-            PermissionError: if operation is blocked by mode/class flags.
-            ValueError: if no ranges are provided.
-            AttributeError: if a column is unknown/unauthorized.
-            TypeError: if range format/logic marker is invalid.
+        Исключения:
+            PermissionError: если операция заблокирована флагами режима/класса.
+            ValueError: если диапазоны не переданы.
+            AttributeError: если колонка неизвестна/недоступна.
+            TypeError: если формат диапазона/логического маркера некорректен.
         """
         if self._flag_of_instance[0] & (1 << 0):
             raise self.get_error(PermissionError, id=0)
-        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (1 << 2):
+        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (
+            1 << 2
+        ):
             raise self.get_error(PermissionError, id=1)
 
         if not ranges:
             raise self.get_error(ValueError, id=16)
-
 
         conditions: list[str] = []
         params: list[Any] = []
@@ -743,7 +797,7 @@ class KCoreORM(__KSql3Execution):
                 use_exact_match = True
                 exact_value = raw_value
             elif isinstance(raw_value, tuple) and len(raw_value) == 2:
-                # (start, end) OR ((start, end), logic)
+                # (start, end) ИЛИ ((start, end), logic)
                 if isinstance(raw_value[0], tuple):
                     bounds = cast(tuple[Any, Any], raw_value[0])
                     logic = raw_value[1]
@@ -754,20 +808,29 @@ class KCoreORM(__KSql3Execution):
                 bounds = cast(tuple[Any, Any], (raw_value[0], raw_value[1]))
                 logic = raw_value[2]
             else:
-                raise self.get_error(TypeError, message=f"Invalid range format for '{column}'")
+                raise self.get_error(
+                    TypeError, message=f"Invalid range format for '{column}'"
+                )
 
-            if not use_exact_match and (not isinstance(bounds, tuple) or len(bounds) != 2):
-                raise self.get_error(TypeError, message=f"Range for '{column}' must contain exactly 2 bounds")
+            if not use_exact_match and (
+                not isinstance(bounds, tuple) or len(bounds) != 2
+            ):
+                raise self.get_error(
+                    TypeError,
+                    message=f"Range for '{column}' must contain exactly 2 bounds",
+                )
 
             if logic is None or logic is KAND:
                 join_op = "AND"
             elif logic is KOR:
                 join_op = "OR"
             else:
-                raise self.get_error(TypeError, message=f"Unsupported logic marker for '{column}'")
+                raise self.get_error(
+                    TypeError, message=f"Unsupported logic marker for '{column}'"
+                )
 
-            # Logic marker belongs to the current (left) condition, so it cannot be
-            # attached to the last condition (there is no right condition to join).
+            # Маркер логики относится к текущему (левому) условию, поэтому его нельзя
+            # прикреплять к последнему условию (нет правого условия для объединения).
             if idx == total_ranges - 1 and logic is not None:
                 raise self.get_error(
                     TypeError,
@@ -785,7 +848,7 @@ class KCoreORM(__KSql3Execution):
 
         condition_str = conditions[0]
         for i, cond in enumerate(conditions[1:], start=1):
-            # Operator is taken from the previous (left) condition.
+            # Оператор берется из предыдущего (левого) условия.
             condition_str = f"{condition_str} {join_ops[i - 1]} {cond}"
 
         safe_table = self._quote_identifier(self._table_name)
@@ -801,31 +864,33 @@ class KCoreORM(__KSql3Execution):
 
     def delete(self, **filters: Any) -> str:
         """
-        Delete rows by exact-match filters.
+        Удалить строки по фильтрам точного совпадения.
 
-        Each keyword argument is treated as:
+        Каждый именованный аргумент трактуется как:
             column_name = value
 
-        Example:
+        Пример:
             delete(id=1, name="admin")
 
-        Notes:
-        - At least one filter is required.
-        - Unknown columns are rejected.
-        - Column identifiers are SQL-quoted for safety.
-        - All filter conditions are joined with AND.
+        Примечания:
+        - Требуется минимум один фильтр.
+        - Неизвестные колонки отклоняются.
+        - Идентификаторы колонок безопасно экранируются.
+        - Все условия фильтра объединяются через AND.
 
-        Returns:
-            Human-readable message with deleted row count.
+        Возвращает:
+            Человекочитаемое сообщение с количеством удаленных строк.
 
-        Raises:
-            PermissionError: if operation is blocked by mode/class flags.
-            ValueError: if no filters are provided.
-            AttributeError: if a column is unknown/unauthorized.
+        Исключения:
+            PermissionError: если операция заблокирована флагами режима/класса.
+            ValueError: если фильтры не переданы.
+            AttributeError: если колонка неизвестна/недоступна.
         """
         if self._flag_of_instance[0] & (1 << 0):
             raise self.get_error(PermissionError, id=0)
-        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (1 << 2):
+        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (
+            1 << 2
+        ):
             raise self.get_error(PermissionError, id=1)
 
         if not filters:
@@ -851,27 +916,29 @@ class KCoreORM(__KSql3Execution):
 
     def drop_columns(self, *columns: str) -> str:
         """
-        Drop one or more columns from the table schema.
+        Удалить одну или несколько колонок из схемы таблицы.
 
-        Restrictions:
-        - Available only for connection instances (not USER mode wrappers).
-        - Mandatory primary key column `id` cannot be dropped.
+        Ограничения:
+        - Доступно только для экземпляров соединения (не для USER-оберток).
+        - Обязательную колонку первичного ключа `id` удалять нельзя.
 
-        Args:
-            *columns: ORM attribute names/column names to drop.
+        Параметры:
+            *columns: Имена атрибутов ORM/имен колонок для удаления.
 
-        Returns:
-            Human-readable message with dropped column names.
+        Возвращает:
+            Человекочитаемое сообщение с именами удаленных колонок.
 
-        Raises:
-            PermissionError: if blocked by mode/class lock flags.
-            ValueError: if no columns are provided.
-            TypeError: if any column name is not a string.
-            AttributeError: if a column is unknown/unauthorized.
+        Исключения:
+            PermissionError: если операция заблокирована флагами режима/класса.
+            ValueError: если не передана ни одна колонка.
+            TypeError: если имя любой колонки не является строкой.
+            AttributeError: если колонка неизвестна/недоступна.
         """
         if self._flag_of_instance[0] & (1 << 0):
             raise self.get_error(PermissionError, id=0)
-        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (1 << 2):
+        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (
+            1 << 2
+        ):
             raise self.get_error(PermissionError, id=1)
         if not columns:
             raise self.get_error(ValueError, message="At least one column is required.")
@@ -907,15 +974,17 @@ class KCoreORM(__KSql3Execution):
             self.db.rollback()
             raise self.get_error(type(e), message=str(e)) from e
 
-        # Keep class metadata consistent with dropped columns.
+        # Поддерживаем метаданные класса в согласованном состоянии после удаления колонок.
         cls = type(self)
         for col in cols_to_drop:
             if col in cls.__dict__ and isinstance(cls.__dict__[col], KColumn):
                 delattr(cls, col)
 
-        cls._orm_meta_cache.pop(cls, None)
+        # Сбрасываем кеш только для текущей БД, а не для всех соединений этого класса.
+        db_key = self._get_db_key(self.db)
+        cls._orm_meta_cache.pop((cls, db_key), None)
 
-        # Rebuild in-memory mapping for the current instance.
+        # Пересобираем in-memory маппинг для текущего экземпляра.
         columns_in_class: dict[str, KColumn] = {}
         for base in cls.__mro__:
             for name, obj in base.__dict__.items():
@@ -937,32 +1006,36 @@ class KCoreORM(__KSql3Execution):
 
         return f"DROPPED columns {', '.join(cols_to_drop)} from {self._table_name}"
 
-    def drop(self, force: str | None = None) -> Literal["CORRECT: Table dropped", "CANCELED"]:
+    def drop(
+        self, force: str | None = None
+    ) -> Literal["CORRECT: Table dropped", "CANCELED"]:
         """
-        Drop the table if it exists (connection-only operation).
+        Удалить таблицу, если она существует (операция только для connection-режима).
 
-        Args:
+        Параметры:
             force:
-                - None -> cancel without dropping;
-                - 'n'  -> cancel without dropping;
-                - 'y'  -> drop immediately.
+                - None -> отменить без удаления;
+                - 'n'  -> отменить без удаления;
+                - 'y'  -> удалить сразу.
 
-        Returns:
-            "CORRECT: Table dropped" on success, otherwise "CANCELED".
+        Возвращает:
+            "CORRECT: Table dropped" при успехе, иначе "CANCELED".
 
-        Raises:
-            PermissionError: if operation is blocked by mode/class flags.
-            TypeError: if force parameter is not a string or None.
-            ValueError: if force parameter is not 'y' or 'n'.
-            Exception: wrapped database error from sqlite execution/commit.
+        Исключения:
+            PermissionError: если операция заблокирована флагами режима/класса.
+            TypeError: если параметр force не строка и не None.
+            ValueError: если параметр force не равен 'y' или 'n'.
+            Exception: завернутая ошибка БД при выполнении/commit SQLite.
         """
 
         if self._flag_of_instance[0] & (1 << 0):
             raise self.get_error(PermissionError, id=0)
 
-        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (1 << 2):
+        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (
+            1 << 2
+        ):
             raise self.get_error(PermissionError, id=1)
-        
+
         if not isinstance(force, (str, type(None))):
             raise self.get_error(
                 TypeError, message="Force parameter must be a string or None."
@@ -971,7 +1044,9 @@ class KCoreORM(__KSql3Execution):
             return "CANCELED"
 
         if force.strip().lower() not in ("y", "n"):
-            raise self.get_error(ValueError, message="Force parameter must be 'y' or 'n'.")
+            raise self.get_error(
+                ValueError, message="Force parameter must be 'y' or 'n'."
+            )
 
         if force.strip().lower() == "n":
             return "CANCELED"
@@ -980,11 +1055,14 @@ class KCoreORM(__KSql3Execution):
         try:
             self.cur.execute(f"DROP TABLE IF EXISTS {safe_table}")
             self.db.commit()
+            # После удаления таблицы инвалидируем кеш метаданных только для текущей БД.
+            cls = type(self)
+            db_key = self._get_db_key(self.db)
+            cls._orm_meta_cache.pop((cls, db_key), None)
             return "CORRECT: Table dropped"
         except Exception as e:
             self.db.rollback()
             raise self.get_error(type(e), message=str(e)) from e
-
 
     def load(self, row_id: int) -> bool:
 
@@ -1005,30 +1083,32 @@ class KCoreORM(__KSql3Execution):
 
     def save(self) -> bool:
         """
-        Persist the current in-memory row data to the database.
+        Сохранить текущие данные строки из памяти в базу данных.
 
-        Behavior:
-        - If `id` is `None`, performs INSERT and writes back `lastrowid` into `self._data`.
-        - If `id` is set, performs UPDATE by primary key.
+        Поведение:
+        - Если `id` равен `None`, выполняется INSERT и `lastrowid` записывается обратно в `self._data`.
+        - Если `id` задан, выполняется UPDATE по первичному ключу.
 
-        Notes:
-        - Operation requires USER mode.
-        - Operation is blocked by class lock flags (`knocommands` / `knoread`).
-        - Table schema must include `id`.
+        Примечания:
+        - Операция требует USER-режим.
+        - Операция блокируется флагами класса (`knocommands` / `knoread`).
+        - Схема таблицы должна содержать колонку `id`.
 
-        Returns:
-            `True` when INSERT/UPDATE is committed successfully.
+        Возвращает:
+            `True`, когда INSERT/UPDATE успешно зафиксирован.
 
-        Raises:
-            PermissionError: if mode/class flags block this operation.
-            AttributeError: if table mapping is invalid or target row for UPDATE is missing.
-            Exception: wrapped database error from sqlite execution/commit.
+        Исключения:
+            PermissionError: если операцию блокируют флаги режима/класса.
+            AttributeError: если маппинг таблицы некорректен или строка для UPDATE не найдена.
+            Exception: завернутая ошибка БД при выполнении/commit SQLite.
         """
 
         if not (self._flag_of_instance[0] & (1 << 0)):
             raise self.get_error(PermissionError, id=0)
 
-        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (1 << 2):
+        if type(self)._flag_of_cls[0] & (1 << 1) or type(self)._flag_of_cls[0] & (
+            1 << 2
+        ):
             raise self.get_error(PermissionError, id=1)
 
         if (pk_name := "id") not in self._col_to_idx:
@@ -1036,15 +1116,17 @@ class KCoreORM(__KSql3Execution):
 
         all_cols = self._col_to_idx
 
-        # get id from _data
+        # Получаем id из _data
         pk_value = self._data[all_cols[pk_name]]
 
         update_cols = [name for name in all_cols if name != pk_name]
 
         try:
             if pk_value is None:
-                # logic insert
-                cols_names = ", ".join(self._quote_identifier(name) for name in all_cols.keys())
+                # Логика вставки
+                cols_names = ", ".join(
+                    self._quote_identifier(name) for name in all_cols.keys()
+                )
                 placeholders = ", ".join(["?"] * len(all_cols))
                 safe_table = self._quote_identifier(self._table_name)
                 sql = f"INSERT INTO {safe_table} ({cols_names}) VALUES ({placeholders})"
@@ -1055,11 +1137,13 @@ class KCoreORM(__KSql3Execution):
                 if self.cur.lastrowid:
                     self._data[all_cols[pk_name]] = cast(Any, self.cur.lastrowid)
             else:
-                # logic update
+                # Логика обновления
                 if not update_cols:
-                    return True  
+                    return True
 
-                set_clause = ", ".join([f"{self._quote_identifier(name)} = ?" for name in update_cols])
+                set_clause = ", ".join(
+                    [f"{self._quote_identifier(name)} = ?" for name in update_cols]
+                )
                 safe_table = self._quote_identifier(self._table_name)
                 safe_pk_name = self._quote_identifier(pk_name)
                 sql = f"UPDATE {safe_table} SET {set_clause} WHERE {safe_pk_name} = ?"
@@ -1068,10 +1152,8 @@ class KCoreORM(__KSql3Execution):
 
                 self.cur.execute(sql, params)
 
-        
                 if self.cur.rowcount == 0:
                     raise self.get_error(AttributeError, id=24, add=str(pk_value))
-
 
             if hasattr(self, "db"):
                 self.db.commit()
@@ -1083,25 +1165,24 @@ class KCoreORM(__KSql3Execution):
                 self.db.rollback()
             raise self.get_error(type(e), message=str(e)) from e
 
-
     @staticmethod
     def get_error(error, message="", id=None, add=None) -> Exception:
         """
-        Build and return an exception instance with a normalized ORM message.
+        Сформировать и вернуть экземпляр исключения с нормализованным сообщением ORM.
 
-        Args:
-            error: Exception class/type to instantiate.
-            message: Fallback message used when `id` is not provided.
-            id: Optional internal message identifier from the local `msgs` map.
-            add: Optional extra context appended to the final message.
+        Параметры:
+            error: Класс/тип исключения для создания экземпляра.
+            message: Резервное сообщение, когда `id` не передан.
+            id: Необязательный внутренний идентификатор сообщения из локального `msgs`.
+            add: Необязательный дополнительный контекст, добавляемый в итоговое сообщение.
 
-        Returns:
-            Instantiated exception object (`error(final_message)`).
+        Возвращает:
+            Созданный объект исключения (`error(final_message)`).
 
-        Notes:
-        - If `id` is provided and exists in `msgs`, mapped text is used.
-        - If `id` is unknown, `message` is used as-is.
-        - `add` is appended as `": {add}"` when `add is not None`.
+        Примечания:
+        - Если `id` передан и существует в `msgs`, используется сопоставленный текст.
+        - Если `id` неизвестен, используется `message` как есть.
+        - `add` добавляется как `": {add}"`, когда `add is not None`.
         """
         msgs = {
             0: "Operation is not permitted for the current connection mode.",
@@ -1139,20 +1220,23 @@ class KCoreORM(__KSql3Execution):
         return error(txt)
 
 
-
 def kregister(cls: Type[T]) -> Type[T]:
     """
-    Register ORM model class and enforce base-initializer contract.
+    Зарегистрировать ORM-модель и проверить контракт вызова базового инициализатора.
     """
     if not issubclass(cls, KCoreORM):
-        raise TypeError(f"Class {cls.__name__} must inherit from KCoreORM to be registered.")
+        raise TypeError(
+            f"Class {cls.__name__} must inherit from KCoreORM to be registered."
+        )
 
     if not hasattr(cls, "_table_name") or not isinstance(cls._table_name, str):
         raise TypeError(f"Class {cls.__name__} must define string _table_name.")
     if not hasattr(cls, "_flag_of_cls"):
         raise TypeError(f"Class {cls.__name__} must define _flag_of_cls.")
     if not isinstance(cls._flag_of_cls, bytearray) or len(cls._flag_of_cls) == 0:
-        raise TypeError(f"Class {cls.__name__} must have non-empty bytearray _flag_of_cls.")
+        raise TypeError(
+            f"Class {cls.__name__} must have non-empty bytearray _flag_of_cls."
+        )
 
     if cls._table_name.upper() in cls.SQLITE_RESERVED_WORDS:
         raise cls.get_error(
@@ -1160,7 +1244,7 @@ def kregister(cls: Type[T]) -> Type[T]:
             message=f"Name table '{cls._table_name}' reserved word in SQLite. Choose another name.",
         )
 
-    # Collect all KColumn descriptors from class hierarchy.
+    # Собираем все дескрипторы KColumn из иерархии классов.
     columns = {}
     for base in cls.__mro__:
         for name, obj in base.__dict__.items():
@@ -1187,44 +1271,44 @@ def kregister(cls: Type[T]) -> Type[T]:
             ),
         )
 
-    # Idempotency guard: avoid wrapping __init__ more than once.
+    # Защита идемпотентности: не оборачиваем __init__ более одного раза.
     if cls.__dict__.get("__kregister_wrapped__", False):
         return cls
 
-    # Isolate class flags from base classes (avoid shared mutable bytearray).
+    # Изолируем флаги класса от базовых классов (избегаем общего изменяемого bytearray).
     if "_flag_of_cls" not in cls.__dict__:
         cls._flag_of_cls = bytearray(cls._flag_of_cls)
 
-    # Activate class (bit 0): constructor is allowed for registered classes.
+    # Активируем класс (бит 0): конструктор разрешен для зарегистрированных классов.
     cls._flag_of_cls[0] |= 1 << 0
-
     orig_init = cls.__init__
 
     def wrapped_init(self, *args, **kwargs):
-        # Clear the "base init ran" marker, then run user init.
-        # If user forgets to call super().__init__(db, cursor), we'll detect it.
-        if hasattr(self, "_flag_of_instance") and isinstance(self._flag_of_instance, bytearray):
+        # Сбрасываем маркер "базовый init выполнен", затем запускаем пользовательский init.
+        # Если пользователь забудет вызвать super().__init__(db, cursor), мы это обнаружим.
+        if hasattr(self, "_flag_of_instance") and isinstance(
+            self._flag_of_instance, bytearray
+        ):
             self._flag_of_instance[0] &= ~(1 << 1)
 
         orig_init(self, *args, **kwargs)
 
-        if not hasattr(self, "_flag_of_instance") or not (self._flag_of_instance[0] & (1 << 1)):
+        if not hasattr(self, "_flag_of_instance") or not (
+            self._flag_of_instance[0] & (1 << 1)
+        ):
             raise cls.get_error(
                 RuntimeError,
                 message=f"{cls.__name__}.__init__ must call super().__init__(db, cursor)",
             )
 
     cls.__init__ = wrapped_init
-    setattr(cls, "__kregister_wrapped__", True)
     return cls
-
-
 
 
 @decorator
 def knocommands(cls: Type[T]) -> Type[T]:
     """
-    Enable class-level write/command lock (bit 1)."""
+    Включить блокировку записи/команд на уровне класса (бит 1)."""
     if "_flag_of_cls" not in cls.__dict__:
         cls._flag_of_cls = bytearray(cls._flag_of_cls)
     cls._flag_of_cls[0] |= 1 << 1
@@ -1234,7 +1318,7 @@ def knocommands(cls: Type[T]) -> Type[T]:
 @decorator
 def knoread(cls: Type[T]) -> Type[T]:
     """
-    Enable class-level read lock (bit 2).
+    Включить блокировку чтения на уровне класса (бит 2).
     """
     if "_flag_of_cls" not in cls.__dict__:
         cls._flag_of_cls = bytearray(cls._flag_of_cls)
@@ -1244,14 +1328,15 @@ def knoread(cls: Type[T]) -> Type[T]:
 
 def KUserMode(conn_with_orm: T) -> T:
     """
-    Build and return a USER-mode proxy from a base ORM connection.
+    Создать и вернуть USER-mode прокси на основе базового ORM-соединения.
 
-    Kept as a plain generic function so IDEs can infer the concrete model type
-    from `KUserMode(conn)` more reliably than from a dynamic class factory.
+    Оставлено как обычная generic-функция, чтобы IDE надёжнее выводили конкретный тип модели
+    из `KUserMode(conn)`, чем при динамической фабрике классов.
     """
-    # Build a user-mode proxy instance around base ORM connection.
+
+    # Создаем прокси-экземпляр пользовательского режима поверх базового ORM-соединения.
     class UserMode(conn_with_orm.__class__):
-        # Explicit slots isolate instance state for the user-mode wrapper.
+        # Явные slots изолируют состояние экземпляра для обертки user-mode.
         __slots__ = (
             "_flag_of_instance",
             "_data",
@@ -1263,22 +1348,21 @@ def KUserMode(conn_with_orm: T) -> T:
         )
 
         def __init__(self, base: T) -> None:
-            # Share DB resources from the base connection.
+            # Разделяем ресурсы БД из базового соединения.
             self.db = base.db
             self.cur = base.cur
             self._table_name = base._table_name
             self._col_to_idx = base._col_to_idx
             self._list_requests = []
 
-            # Enable USER mode flag.
+            # Включаем флаг USER-режима.
             self._flag_of_instance = bytearray(1)
             self._flag_of_instance[0] = 1 << 0
-            # Own in-memory row buffer per user wrapper instance.
+            # Собственный in-memory буфер строки для каждого экземпляра user-обертки.
             if isinstance(base._data, list):
                 self._data = [None] * len(base._data)
             else:
                 self._data = []
 
-    # Return USER-mode proxy instance.
+    # Возвращаем прокси-экземпляр USER-режима.
     return cast(T, UserMode(conn_with_orm))
-
