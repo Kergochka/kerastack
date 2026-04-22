@@ -3,11 +3,13 @@ from typing import Any, Callable, Type, TypeVar, cast
 T = TypeVar("T")
 F = TypeVar("F", bound=Callable[..., Any])
 
+
 def decorator(func: F) -> F:
     """
     Marker meta-decorator for project-level decorators.
     """
     return func
+
 
 @decorator
 def check_columns_for_update(cls: Type[T]) -> Type[T]:
@@ -15,7 +17,7 @@ def check_columns_for_update(cls: Type[T]) -> Type[T]:
     Check if the class has the required columns for updating.
     """
 
-    from kerastack.KergaSQL import KCoreORM
+    from kerastack.SQL3ORM import KCoreORM
 
     if not issubclass(cls, KCoreORM):
         raise TypeError(f"Class {cls.__name__} must inherit from KCoreORM.")

@@ -2,18 +2,17 @@ import sqlite3
 import unittest
 from typing import Any, Callable, Iterable, cast
 
-from kerastack.KergaSQL import (
+from kerastack.decorators import check_columns_for_update
+from kerastack.SQL3ORM import (
     KAND,
     KOR,
     KColumn,
     KCoreORM,
     KUserMode,
-    kregister,
     knocommands,
     knoread,
+    kregister,
 )
-from kerastack.decorators import check_columns_for_update
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,10 +68,16 @@ def _create_model(
         namespace["age"] = KColumn("INTEGER")
 
     if call_super_init:
-        def __init__(self: KCoreORM, db: sqlite3.Connection, cursor: sqlite3.Cursor) -> None:
+
+        def __init__(
+            self: KCoreORM, db: sqlite3.Connection, cursor: sqlite3.Cursor
+        ) -> None:
             KCoreORM.__init__(self, db, cursor)
     else:
-        def __init__(self: KCoreORM, db: sqlite3.Connection, cursor: sqlite3.Cursor) -> None:
+
+        def __init__(
+            self: KCoreORM, db: sqlite3.Connection, cursor: sqlite3.Cursor
+        ) -> None:
             # Intentionally skip base init for contract-check tests.
             _ = (db, cursor)
 
@@ -86,7 +91,9 @@ def _create_model(
     return cls
 
 
-def _build_env(model_cls: type[KCoreORM]) -> tuple[sqlite3.Connection, sqlite3.Cursor, Any, Any]:
+def _build_env(
+    model_cls: type[KCoreORM],
+) -> tuple[sqlite3.Connection, sqlite3.Cursor, Any, Any]:
     db = sqlite3.connect(":memory:")
     cur = db.cursor()
     base = model_cls(db, cur)
@@ -96,7 +103,9 @@ def _build_env(model_cls: type[KCoreORM]) -> tuple[sqlite3.Connection, sqlite3.C
 
 def _insert_rows(orm: KCoreORM, table_name: str, rows: list[tuple[str, int]]) -> None:
     for name, age in rows:
-        orm.cur.execute(f'INSERT INTO "{table_name}" (name, age) VALUES ("{name}", {age})')
+        orm.cur.execute(
+            f'INSERT INTO "{table_name}" (name, age) VALUES ("{name}", {age})'
+        )
     orm.db.commit()
 
 
@@ -126,7 +135,9 @@ class TestRegistrationAndSchema(unittest.TestCase):
             with_age=False,
             register=False,
         )
-        _expect_raises(self, AttributeError, lambda: kregister(cls), "has no KColumn defined")
+        _expect_raises(
+            self, AttributeError, lambda: kregister(cls), "has no KColumn defined"
+        )
 
     def test_kregister_requires_id_column(self) -> None:
         cls = _create_model(
@@ -137,7 +148,9 @@ class TestRegistrationAndSchema(unittest.TestCase):
             with_age=True,
             register=False,
         )
-        _expect_raises(self, AttributeError, lambda: kregister(cls), "mandatory 'id' column")
+        _expect_raises(
+            self, AttributeError, lambda: kregister(cls), "mandatory 'id' column"
+        )
 
     def test_kregister_rejects_non_integer_primary_key_id(self) -> None:
         class_name = _next_name("BadIdType")
@@ -151,7 +164,9 @@ class TestRegistrationAndSchema(unittest.TestCase):
             "age": KColumn("INTEGER"),
         }
 
-        def __init__(self: KCoreORM, db: sqlite3.Connection, cursor: sqlite3.Cursor) -> None:
+        def __init__(
+            self: KCoreORM, db: sqlite3.Connection, cursor: sqlite3.Cursor
+        ) -> None:
             KCoreORM.__init__(self, db, cursor)
 
         namespace["__init__"] = __init__
@@ -173,13 +188,17 @@ class TestRegistrationAndSchema(unittest.TestCase):
         _expect_raises(self, AttributeError, lambda: kregister(cls), "reserved word")
 
     def test_init_rejects_unregistered_model(self) -> None:
-        cls = _create_model(class_prefix="NoRegInit", table_prefix="no_reg_init", register=False)
+        cls = _create_model(
+            class_prefix="NoRegInit", table_prefix="no_reg_init", register=False
+        )
         db = sqlite3.connect(":memory:")
         cur = db.cursor()
         _expect_raises(self, RuntimeError, lambda: cls(db, cur), "isn't registered")
 
     def test_kregister_is_idempotent_for_init_wrapping(self) -> None:
-        cls = _create_model(class_prefix="RegClass", table_prefix="reg_table", register=True)
+        cls = _create_model(
+            class_prefix="RegClass", table_prefix="reg_table", register=True
+        )
         wrapped_once = cls.__init__
         wrapped_again = kregister(cls).__init__
         self.assertIs(wrapped_once, wrapped_again)
@@ -193,7 +212,9 @@ class TestRegistrationAndSchema(unittest.TestCase):
         )
         db = sqlite3.connect(":memory:")
         cur = db.cursor()
-        _expect_raises(self, RuntimeError, lambda: cls(db, cur), "must call super().__init__")
+        _expect_raises(
+            self, RuntimeError, lambda: cls(db, cur), "must call super().__init__"
+        )
 
     def test_flag_buffers_are_isolated_between_classes(self) -> None:
         a = _create_model(class_prefix="IsoA", table_prefix="iso_a", register=True)
@@ -278,18 +299,31 @@ class TestSqlValidationAndExecution(unittest.TestCase):
         cls = _create_model(class_prefix="ExecUserMode", table_prefix="exec_user_mode")
         _, _, _, user = _build_env(cls)
         _expect_raises(
-            self, PermissionError, lambda: user.execute("SELECT 1"), "current connection mode"
+            self,
+            PermissionError,
+            lambda: user.execute("SELECT 1"),
+            "current connection mode",
         )
 
     def test_execute_rejects_non_str_in_list(self) -> None:
         cls = _create_model(class_prefix="ExecTypes", table_prefix="exec_types")
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, TypeError, lambda: base.execute(cast(Any, ["SELECT 1", 42])), "must be a string")
+        _expect_raises(
+            self,
+            TypeError,
+            lambda: base.execute(cast(Any, ["SELECT 1", 42])),
+            "must be a string",
+        )
 
     def test_execute_rejects_invalid_sql(self) -> None:
         cls = _create_model(class_prefix="ExecInvalid", table_prefix="exec_invalid")
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, sqlite3.OperationalError, lambda: base.execute("SELCT 1"), "rejected by ORM validator")
+        _expect_raises(
+            self,
+            sqlite3.OperationalError,
+            lambda: base.execute("SELCT 1"),
+            "rejected by ORM validator",
+        )
 
     def test_add_requests_and_queue_execution(self) -> None:
         cls = _create_model(class_prefix="ExecQueue", table_prefix="exec_queue")
@@ -313,13 +347,23 @@ class TestSqlValidationAndExecution(unittest.TestCase):
     def test_add_requests_rejects_invalid_sql(self) -> None:
         cls = _create_model(class_prefix="ExecQueueBad", table_prefix="exec_queue_bad")
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, sqlite3.OperationalError, lambda: base.add_requests("SELCT 1"), "rejected by ORM validator")
+        _expect_raises(
+            self,
+            sqlite3.OperationalError,
+            lambda: base.add_requests("SELCT 1"),
+            "rejected by ORM validator",
+        )
 
     def test_add_requests_rejects_user_mode(self) -> None:
-        cls = _create_model(class_prefix="ExecQueueUserMode", table_prefix="exec_queue_user_mode")
+        cls = _create_model(
+            class_prefix="ExecQueueUserMode", table_prefix="exec_queue_user_mode"
+        )
         _, _, _, user = _build_env(cls)
         _expect_raises(
-            self, PermissionError, lambda: user.add_requests("SELECT 1"), "current connection mode"
+            self,
+            PermissionError,
+            lambda: user.add_requests("SELECT 1"),
+            "current connection mode",
         )
 
     def test_execute_respects_knocommands_lock(self) -> None:
@@ -329,7 +373,9 @@ class TestSqlValidationAndExecution(unittest.TestCase):
             decorators=(knocommands,),
         )
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, PermissionError, lambda: base.execute("SELECT 1"), "class-level lock")
+        _expect_raises(
+            self, PermissionError, lambda: base.execute("SELECT 1"), "class-level lock"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +399,7 @@ class TestFetchAndDescriptors(unittest.TestCase):
         base = cls(db, cur)
 
         _expect_raises(self, Exception, lambda: setattr(base, "name", "x"), "USER mode")
-        _expect_raises(self, Exception, lambda: getattr(base, "name"), "USER mode")
+        _expect_raises(self, Exception, lambda: base.name, "USER mode")
 
     def test_descriptor_blocked_by_knoread(self) -> None:
         cls = _create_model(
@@ -362,8 +408,10 @@ class TestFetchAndDescriptors(unittest.TestCase):
             decorators=(knoread,),
         )
         _, _, _, user = _build_env(cls)
-        _expect_raises(self, PermissionError, lambda: setattr(user, "name", "x"), "knoread")
-        _expect_raises(self, PermissionError, lambda: getattr(user, "name"), "knoread")
+        _expect_raises(
+            self, PermissionError, lambda: setattr(user, "name", "x"), "knoread"
+        )
+        _expect_raises(self, PermissionError, lambda: user.name, "knoread")
 
     def test_fetchall_success_path(self) -> None:
         cls = _create_model(class_prefix="FetchAll", table_prefix="fetch_all")
@@ -375,10 +423,17 @@ class TestFetchAndDescriptors(unittest.TestCase):
     def test_fetchall_requires_select(self) -> None:
         cls = _create_model(class_prefix="FetchAllBad", table_prefix="fetch_all_bad")
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, TypeError, lambda: base.fetchall("DELETE FROM x"), "doesn't start with 'SELECT'")
+        _expect_raises(
+            self,
+            TypeError,
+            lambda: base.fetchall("DELETE FROM x"),
+            "doesn't start with 'SELECT'",
+        )
 
     def test_fetchone_two_step_mode(self) -> None:
-        cls = _create_model(class_prefix="FetchOneTwoStep", table_prefix="fetch_one_two_step")
+        cls = _create_model(
+            class_prefix="FetchOneTwoStep", table_prefix="fetch_one_two_step"
+        )
         _, _, base, _ = _build_env(cls)
         _insert_rows(base, cls._table_name, [("x", 10), ("y", 20)])
 
@@ -388,7 +443,9 @@ class TestFetchAndDescriptors(unittest.TestCase):
         self.assertEqual(base.fetchone(""), ("y",))
 
     def test_fetchone_immediate_mode(self) -> None:
-        cls = _create_model(class_prefix="FetchOneImmediate", table_prefix="fetch_one_immediate")
+        cls = _create_model(
+            class_prefix="FetchOneImmediate", table_prefix="fetch_one_immediate"
+        )
         _, _, base, _ = _build_env(cls)
         _insert_rows(base, cls._table_name, [("x", 10), ("y", 20)])
         base.fetchone(f'SELECT name FROM "{cls._table_name}" ORDER BY age')
@@ -401,14 +458,30 @@ class TestFetchAndDescriptors(unittest.TestCase):
             decorators=(knoread,),
         )
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, PermissionError, lambda: base.fetchall("SELECT 1"), "knoread")
-        _expect_raises(self, PermissionError, lambda: base.fetchone("SELECT 1"), "knoread")
+        _expect_raises(
+            self, PermissionError, lambda: base.fetchall("SELECT 1"), "knoread"
+        )
+        _expect_raises(
+            self, PermissionError, lambda: base.fetchone("SELECT 1"), "knoread"
+        )
 
     def test_user_mode_rejects_fetchall_and_fetchone(self) -> None:
-        cls = _create_model(class_prefix="FetchUserBlocked", table_prefix="fetch_user_blocked")
+        cls = _create_model(
+            class_prefix="FetchUserBlocked", table_prefix="fetch_user_blocked"
+        )
         _, _, _, user = _build_env(cls)
-        _expect_raises(self, PermissionError, lambda: user.fetchall("SELECT 1"), "current connection mode")
-        _expect_raises(self, PermissionError, lambda: user.fetchone("SELECT 1"), "current connection mode")
+        _expect_raises(
+            self,
+            PermissionError,
+            lambda: user.fetchall("SELECT 1"),
+            "current connection mode",
+        )
+        _expect_raises(
+            self,
+            PermissionError,
+            lambda: user.fetchone("SELECT 1"),
+            "current connection mode",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +498,12 @@ class TestDeleteApis(unittest.TestCase):
     def test_delete_rejects_unknown_column(self) -> None:
         cls = _create_model(class_prefix="DelUnknown", table_prefix="del_unknown")
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, AttributeError, lambda: base.delete(ghost=1), "Unknown or unauthorized column")
+        _expect_raises(
+            self,
+            AttributeError,
+            lambda: base.delete(ghost=1),
+            "Unknown or unauthorized column",
+        )
 
     def test_delete_success(self) -> None:
         cls = _create_model(class_prefix="DelOK", table_prefix="del_ok")
@@ -439,17 +517,28 @@ class TestDeleteApis(unittest.TestCase):
     def test_delete_ranges_requires_input(self) -> None:
         cls = _create_model(class_prefix="DelRangeReq", table_prefix="del_range_req")
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, ValueError, lambda: base.delete_ranges(), "At least one range")
+        _expect_raises(
+            self, ValueError, lambda: base.delete_ranges(), "At least one range"
+        )
 
     def test_delete_ranges_rejects_unknown_column(self) -> None:
-        cls = _create_model(class_prefix="DelRangeUnknown", table_prefix="del_range_unknown")
+        cls = _create_model(
+            class_prefix="DelRangeUnknown", table_prefix="del_range_unknown"
+        )
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, AttributeError, lambda: base.delete_ranges(ghost=(1, 2)), "Unknown or unauthorized column")
+        _expect_raises(
+            self,
+            AttributeError,
+            lambda: base.delete_ranges(ghost=(1, 2)),
+            "Unknown or unauthorized column",
+        )
 
     def test_delete_ranges_rejects_invalid_format(self) -> None:
         cls = _create_model(class_prefix="DelRangeFmt", table_prefix="del_range_fmt")
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, TypeError, lambda: base.delete_ranges(id=(1,)), "Invalid range format")
+        _expect_raises(
+            self, TypeError, lambda: base.delete_ranges(id=(1,)), "Invalid range format"
+        )
 
     def test_delete_ranges_rejects_last_logic_marker(self) -> None:
         cls = _create_model(class_prefix="DelRangeLast", table_prefix="del_range_last")
@@ -462,7 +551,9 @@ class TestDeleteApis(unittest.TestCase):
         )
 
     def test_delete_ranges_accepts_exact_value_shorthand(self) -> None:
-        cls = _create_model(class_prefix="DelRangeExact", table_prefix="del_range_exact")
+        cls = _create_model(
+            class_prefix="DelRangeExact", table_prefix="del_range_exact"
+        )
         _, _, base, _ = _build_env(cls)
         _insert_rows(base, cls._table_name, [("a", 10), ("b", 20), ("a", 30)])
 
@@ -472,9 +563,13 @@ class TestDeleteApis(unittest.TestCase):
         self.assertEqual(rows, [("b", 20)])
 
     def test_delete_ranges_logic_semantics_or_and(self) -> None:
-        cls = _create_model(class_prefix="DelRangeLogic", table_prefix="del_range_logic")
+        cls = _create_model(
+            class_prefix="DelRangeLogic", table_prefix="del_range_logic"
+        )
         _, _, base, _ = _build_env(cls)
-        _insert_rows(base, cls._table_name, [("n1", 10), ("n2", 20), ("n3", 30), ("n4", 40)])
+        _insert_rows(
+            base, cls._table_name, [("n1", 10), ("n2", 20), ("n3", 30), ("n4", 40)]
+        )
 
         # id in [1,2] OR age in [35,50] should remove ids 1,2,4 and keep id 3.
         msg = base.delete_ranges(id=(1, 2, KOR), age=(35, 50))
@@ -484,16 +579,25 @@ class TestDeleteApis(unittest.TestCase):
         self.assertEqual(rows[0][1], 30)
 
     def test_delete_ranges_nested_bounds_format(self) -> None:
-        cls = _create_model(class_prefix="DelRangeNested", table_prefix="del_range_nested")
+        cls = _create_model(
+            class_prefix="DelRangeNested", table_prefix="del_range_nested"
+        )
         _, _, base, _ = _build_env(cls)
         _insert_rows(base, cls._table_name, [("x", 1), ("y", 2)])
         msg = base.delete_ranges(age=((100, 200), KAND), id=(500, 500))
         self.assertIn("DELETED 0", msg)
 
     def test_user_mode_rejects_delete_and_delete_ranges(self) -> None:
-        cls = _create_model(class_prefix="DelUserBlocked", table_prefix="del_user_blocked")
+        cls = _create_model(
+            class_prefix="DelUserBlocked", table_prefix="del_user_blocked"
+        )
         _, _, _, user = _build_env(cls)
-        _expect_raises(self, PermissionError, lambda: user.delete(name="x"), "current connection mode")
+        _expect_raises(
+            self,
+            PermissionError,
+            lambda: user.delete(name="x"),
+            "current connection mode",
+        )
         _expect_raises(
             self,
             PermissionError,
@@ -521,36 +625,64 @@ class TestDropApis(unittest.TestCase):
         _expect_raises(self, ValueError, lambda: base.drop("zzz"), "must be 'y' or 'n'")
 
     def test_drop_columns_conn_only(self) -> None:
-        cls = _create_model(class_prefix="DropColsConnOnly", table_prefix="drop_cols_conn_only")
+        cls = _create_model(
+            class_prefix="DropColsConnOnly", table_prefix="drop_cols_conn_only"
+        )
         _, _, base, user = _build_env(cls)
         _expect_raises(
-            self, PermissionError, lambda: user.drop_columns("age"), "current connection mode"
+            self,
+            PermissionError,
+            lambda: user.drop_columns("age"),
+            "current connection mode",
         )
         # base path should not raise for valid column
         self.assertIn("DROPPED columns", base.drop_columns("age"))
 
     def test_drop_columns_rejects_empty(self) -> None:
-        cls = _create_model(class_prefix="DropColsEmpty", table_prefix="drop_cols_empty")
+        cls = _create_model(
+            class_prefix="DropColsEmpty", table_prefix="drop_cols_empty"
+        )
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, ValueError, lambda: base.drop_columns(), "At least one column is required")
+        _expect_raises(
+            self,
+            ValueError,
+            lambda: base.drop_columns(),
+            "At least one column is required",
+        )
 
     def test_drop_columns_rejects_non_string(self) -> None:
         cls = _create_model(class_prefix="DropColsType", table_prefix="drop_cols_type")
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, TypeError, lambda: base.drop_columns(cast(Any, 1)), "must be strings")
+        _expect_raises(
+            self, TypeError, lambda: base.drop_columns(cast(Any, 1)), "must be strings"
+        )
 
     def test_drop_columns_rejects_unknown_column(self) -> None:
-        cls = _create_model(class_prefix="DropColsUnknown", table_prefix="drop_cols_unknown")
+        cls = _create_model(
+            class_prefix="DropColsUnknown", table_prefix="drop_cols_unknown"
+        )
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, AttributeError, lambda: base.drop_columns("ghost"), "Unknown or unauthorized column")
+        _expect_raises(
+            self,
+            AttributeError,
+            lambda: base.drop_columns("ghost"),
+            "Unknown or unauthorized column",
+        )
 
     def test_drop_columns_protects_id(self) -> None:
         cls = _create_model(class_prefix="DropColsId", table_prefix="drop_cols_id")
         _, _, base, _ = _build_env(cls)
-        _expect_raises(self, PermissionError, lambda: base.drop_columns("id"), "Cannot drop mandatory primary key")
+        _expect_raises(
+            self,
+            PermissionError,
+            lambda: base.drop_columns("id"),
+            "Cannot drop mandatory primary key",
+        )
 
     def test_drop_columns_updates_schema_and_mapping(self) -> None:
-        cls = _create_model(class_prefix="DropColsUpdate", table_prefix="drop_cols_update")
+        cls = _create_model(
+            class_prefix="DropColsUpdate", table_prefix="drop_cols_update"
+        )
         db, cur, base, _ = _build_env(cls)
         self.assertIn("age", base._col_to_idx)
 
@@ -592,14 +724,18 @@ class TestSaveLoadAndMode(unittest.TestCase):
         user.id = 99999
         user.name = "ghost"
         user.age = 1
-        _expect_raises(self, AttributeError, lambda: user.save(), "No row found to update")
+        _expect_raises(
+            self, AttributeError, lambda: user.save(), "No row found to update"
+        )
 
     def test_save_blocked_for_non_user(self) -> None:
         cls = _create_model(class_prefix="SaveBase", table_prefix="save_base")
         db = sqlite3.connect(":memory:")
         cur = db.cursor()
         base = cls(db, cur)
-        _expect_raises(self, PermissionError, lambda: base.save(), "current connection mode")
+        _expect_raises(
+            self, PermissionError, lambda: base.save(), "current connection mode"
+        )
 
     def test_save_blocked_by_class_locks(self) -> None:
         cls = _create_model(
@@ -628,7 +764,9 @@ class TestSaveLoadAndMode(unittest.TestCase):
         db = sqlite3.connect(":memory:")
         cur = db.cursor()
         base = cls(db, cur)
-        _expect_raises(self, PermissionError, lambda: base.load(1), "current connection mode")
+        _expect_raises(
+            self, PermissionError, lambda: base.load(1), "current connection mode"
+        )
 
     def test_load_blocked_by_knoread(self) -> None:
         cls = _create_model(
@@ -701,7 +839,9 @@ class TestIntegrationSmoke(unittest.TestCase):
         self.assertTrue(user.save())
         id2 = user.id
 
-        rows = base.fetchall(f'SELECT id, name, age FROM "{cls._table_name}" ORDER BY id')
+        rows = base.fetchall(
+            f'SELECT id, name, age FROM "{cls._table_name}" ORDER BY id'
+        )
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0][0], id1)
         self.assertEqual(rows[1][0], id2)

@@ -503,6 +503,10 @@ class KCoreORM(__KSql3Execution):
         if q.count("(") != q.count(")"):
             return False, "Unbalanced parentheses in SQL request."
 
+        no_quotes = re.sub(r"'.*?'|\".*?\"", "", q)
+        if ";" in no_quotes:
+            return False, "Multiple SQL statements"
+
         cmd = q.split(maxsplit=1)[0].upper()
         if allowed_commands and cmd not in allowed_commands:
             return False, f"Command '{cmd}' is not allowed in this context."
@@ -1224,10 +1228,14 @@ def kregister(cls: Type[T]) -> Type[T]:
     """
     Зарегистрировать ORM-модель и проверить контракт вызова базового инициализатора.
     """
+
     if not issubclass(cls, KCoreORM):
         raise TypeError(
             f"Class {cls.__name__} must inherit from KCoreORM to be registered."
         )
+
+    if cls._flag_of_cls[0] & (1 << 0):
+        return cls
 
     if not hasattr(cls, "_table_name") or not isinstance(cls._table_name, str):
         raise TypeError(f"Class {cls.__name__} must define string _table_name.")
@@ -1271,21 +1279,17 @@ def kregister(cls: Type[T]) -> Type[T]:
             ),
         )
 
-    # Защита идемпотентности: не оборачиваем __init__ более одного раза.
-    if cls.__dict__.get("__kregister_wrapped__", False):
-        return cls
-
     # Изолируем флаги класса от базовых классов (избегаем общего изменяемого bytearray).
     if "_flag_of_cls" not in cls.__dict__:
         cls._flag_of_cls = bytearray(cls._flag_of_cls)
 
     # Активируем класс (бит 0): конструктор разрешен для зарегистрированных классов.
     cls._flag_of_cls[0] |= 1 << 0
+
     orig_init = cls.__init__
 
+    # 1. Сначала ОПРЕДЕЛЯЕМ функцию (но не выходим!)
     def wrapped_init(self, *args, **kwargs):
-        # Сбрасываем маркер "базовый init выполнен", затем запускаем пользовательский init.
-        # Если пользователь забудет вызвать super().__init__(db, cursor), мы это обнаружим.
         if hasattr(self, "_flag_of_instance") and isinstance(
             self._flag_of_instance, bytearray
         ):
@@ -1302,6 +1306,10 @@ def kregister(cls: Type[T]) -> Type[T]:
             )
 
     cls.__init__ = wrapped_init
+
+    # ВКЛЮЧАЕМ бит 0: "Класс зарегистрирован"
+    cls._flag_of_cls[0] |= 1 << 0
+
     return cls
 
 

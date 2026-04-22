@@ -5,8 +5,7 @@ from pathlib import Path
 # Allow running this file directly from the examples folder.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from kerastack.KergaSQL import KColumn, KCoreORM, KUserMode, kregister
-
+from kerastack.SQL3ORM import KColumn, KCoreORM, KUserMode, kregister
 
 DB_PATH = "example.db"
 
